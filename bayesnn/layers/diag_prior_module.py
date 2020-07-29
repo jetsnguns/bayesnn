@@ -8,16 +8,6 @@ def calculate_kl(mu_p, sig_p, mu_q, sig_q):
     return kl
 
 
-class NormalModule(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.register_buffer("loc", torch.tensor(0.))
-        self.register_buffer("scale", torch.tensor(1.))
-
-    def get_dist(self):
-        return torch.distributions.Normal(self.loc, self.scale)
-
-
 class DiagPriorModule(nn.Module):
     def __init__(self, shape, bias=True, priors={}):
         super().__init__()
@@ -49,15 +39,15 @@ class DiagPriorModule(nn.Module):
         self.use_bias = bias
 
         if self.use_bias:
-            self.bias_mu = nn.Parameter(torch.empty((shape[0],)))
-            self.bias_rho = nn.Parameter(torch.empty((shape[0],)))
+            self.bias_mu = nn.Parameter(torch.empty(shape[0]))
+            self.bias_rho = nn.Parameter(torch.empty(shape[0]))
         else:
             self.register_parameter('bias_mu', None)
             self.register_parameter('bias_rho', None)
 
         self.reset_parameters()
 
-        self.std_normal = NormalModule()
+        self.min_std = 1e-5
 
     def reset_parameters(self):
         self.W_mu.data.normal_(*self.posterior_mu_initial)
@@ -78,13 +68,13 @@ class DiagPriorModule(nn.Module):
 
     def forward(self, input, sample=True):
         if self.training or sample:
-            W_sigma = torch.nn.functional.softplus(self.W_rho)
+            W_sigma = self.min_std + torch.nn.functional.softplus(self.W_rho)
             weight = torch.distributions.Normal(self.W_mu, W_sigma).rsample()
 
             kl = self.kl_weights(self.W_mu, W_sigma)
 
             if self.use_bias:
-                bias_sigma = torch.nn.functional.softplus(self.bias_rho)
+                bias_sigma = self.min_std + torch.nn.functional.softplus(self.bias_rho)
                 bias = torch.distributions.Normal(self.bias_mu, bias_sigma).rsample()
                 kl += self.kl_bias(self.bias_mu, bias_sigma)
             else:
